@@ -1,0 +1,12 @@
+node_modules/
+bun.lock
+dist/
+build/
+.rsbuild-cache/
+*.log
+.vscode/
+.DS_Store
+.env
+.env.*
+coverage/
+*.lcov
