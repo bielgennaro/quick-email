@@ -1,0 +1,25 @@
+services:
+  quick-email-container:
+    build: .
+    ports:
+      - "5050:5050"
+    environment:
+      - AI_MODEL=google/gemma-3-270m
+      - DEBUG_MODE=false
+      - LOG_LEVEL=INFO
+      - MODEL_DEVICE=cpu
+      - MAX_CONTENT_LENGTH=10000
+      - FLASK_ENV=production
+    volumes:
+      - ./logs:/app/logs
+      - nltk_data:/home/app/nltk_data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5050/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  nltk_data:

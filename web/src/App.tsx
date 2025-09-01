@@ -1,12 +1,11 @@
-import './App.css';
+import { EmailTable } from "@/components/EmailTable";
 
-const App = () => {
+export default function App() {
   return (
-    <div className="content">
-      <h1>Rsbuild with React</h1>
-      <p>Start building amazing things with Rsbuild.</p>
+    <div className="min-h-screen bg-gray-100 flex flex-col">
+      <main className="flex-1 flex flex-col items-center justify-start w-full">
+          <EmailTable />
+      </main>
     </div>
   );
-};
-
-export default App;
+}

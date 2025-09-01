@@ -1,0 +1,22 @@
+[
+  {
+    "email_text": "Olá, gostaria de saber mais sobre os serviços oferecidos e se há algum desconto para empresas.",
+    "attachment_text": "",
+    "response": "Olá! Obrigado pelo contato. Oferecemos diversos serviços para empresas e temos condições especiais. Poderia informar o porte da sua empresa para enviarmos uma proposta personalizada?"
+  },
+  {
+    "email_text": "Segue em anexo o PDF com as especificações do projeto. Aguardo orçamento.",
+    "attachment_text": "Projeto: Sistema de Gestão\nFuncionalidades: Cadastro, Relatórios, Dashboard.",
+    "response": "Recebemos o PDF com as especificações do projeto. Em breve enviaremos um orçamento detalhado com base nas funcionalidades solicitadas."
+  },
+  {
+    "email_text": "Quero cancelar minha assinatura. Não estou satisfeito com o serviço.",
+    "attachment_text": "",
+    "response": "Sentimos muito pela sua insatisfação. Sua solicitação de cancelamento será processada imediatamente. Se desejar compartilhar o motivo, ficaremos gratos pelo feedback."
+  },
+  {
+    "email_text": "Olá, segue o relatório financeiro em anexo para análise.",
+    "attachment_text": "Relatório Financeiro 2025\nReceita: R$ 100.000\nDespesas: R$ 60.000\nLucro: R$ 40.000",
+    "response": "Recebemos o relatório financeiro em anexo. Agradecemos o envio e retornaremos com a análise detalhada em breve."
+  }
+]

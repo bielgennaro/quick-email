@@ -1,3 +1,4 @@
+from bson import ObjectId, errors as bson_errors
 import logging
 import os
 from functools import wraps
@@ -13,6 +14,7 @@ from nltk.tokenize import word_tokenize
 
 from utils.ai_model import AIModelService
 from utils.config import get_settings
+from utils.mongo import get_mongo_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,40 +23,66 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def initialize_nltk():
-    try:
-        nltk.data.find('tokenizers/punkt')
-    except LookupError:
-        logger.info("Baixando recurso 'punkt' do NLTK...")
-        nltk.download('punkt', quiet=True)
-    
-    try:
-        nltk.data.find('corpora/stopwords')
-    except LookupError:
-        logger.info("Baixando recurso 'stopwords' do NLTK...")
-        nltk.download('stopwords', quiet=True)
-    
-    try:
-        nltk.data.find('corpora/wordnet')
-    except LookupError:
-        logger.info("Baixando recurso 'wordnet' do NLTK...")
-        nltk.download('wordnet', quiet=True)
+    resources = ['punkt_tab', 'punkt', 'stopwords', 'wordnet', 'omw-1.4']
+    for resource in resources:
+        try:
+            nltk.download(resource, quiet=True)
+        except Exception as e:
+            logger.warning(f"Falha ao baixar '{resource}': {e}")
 
 initialize_nltk()
 
+def validate_non_empty_content(value):
+    """Função de validação personalizada para conteúdo não vazio"""
+    if not value.strip():
+        raise ValidationError('Conteúdo não pode estar vazio')
+    return value
+
 class EmailRequestSchema(Schema):
+    email = fields.Str(
+        required=True,
+        validate=[
+            validate.Length(min=1, max=10000),
+            validate_non_empty_content  
+        ],
+        error_messages={
+            'required': 'Email é obrigatório',
+            'invalid': 'Email deve ser uma string válida'
+        }
+    )
     content = fields.Str(
         required=True,
-        validate=validate.Length(min=1, max=10000),
+        validate=[
+            validate.Length(min=1, max=10000),
+            validate_non_empty_content  
+        ],
         error_messages={
             'required': 'Conteúdo é obrigatório',
             'invalid': 'Conteúdo deve ser uma string válida'
         }
     )
+    snippet = fields.Str(
+        required=True,
+        validate=[
+            validate.Length(min=1, max=10000),
+            validate_non_empty_content  
+        ],
+        error_messages={
+            'required': 'Assunto é obrigatório',
+            'invalid': 'Assunto deve ser uma string válida'
+        }
+    )
     
     @validates('content')
-    def validate_content(self, value):
+    def validate_content(self, value, **kwargs):
         if not value.strip():
             raise ValidationError('Conteúdo não pode estar vazio')
+    def validate_snippet(self, value, **kwargs):
+        if not value.strip():
+            raise ValidationError('Assunto não pode estar vazio')
+    def validate_email(self, value, **kwargs):
+        if not value.strip():
+            raise ValidationError('Email não pode estar vazio')
 
 class EmailResponseSchema(Schema):
     category = fields.Str(required=True)
@@ -74,19 +102,28 @@ health_response_schema = HealthResponseSchema()
 def create_app():
     app = Flask(__name__)
     settings = get_settings()
-    
     app.config.update({
         'SECRET_KEY': os.environ.get('SECRET_KEY'),
         'JSON_AS_ASCII': False,
-        'MAX_CONTENT_LENGTH': settings.max_content_length,
+        'MAX_CONTENT_LENGTH': 10 * 1024 * 1024,  # 10MB
         'DEBUG': settings.debug_mode
     })
-    
     CORS(app, origins=settings.allowed_hosts if settings.allowed_hosts != ["*"] else "*")
-    
     return app
 
 app = create_app()
+
+@app.before_request
+def before_request_mongo():
+    from flask import g
+    if not hasattr(g, 'mongo_client'):
+        g.mongo_client = get_mongo_client()
+
+@app.before_request
+def before_request_mongo():
+    from flask import g
+    if not hasattr(g, 'mongo_client'):
+        g.mongo_client = get_mongo_client()
 
 _stop_words_cache = None
 _lemmatizer_cache = None
@@ -167,24 +204,19 @@ class EmailClassifier:
         self.ai_service = AIModelService()
         self.preprocessor = TextPreprocessor()
     
-    def classify_email(self, text: str) -> tuple[str, float]:
+    def classify_email(self, prompt: str) -> tuple[str, float]:
         """
-        Classifica um email como produtivo ou improdutivo.
+        Classifica um email como produtivo ou improdutivo, usando um prompt estruturado.
         """
         try:
-            processed_text = self.preprocessor.preprocess_text(text)
-            
+            processed_text = self.preprocessor.preprocess_text(prompt)
             if not processed_text:
                 logger.warning("Texto vazio após pré-processamento")
                 return "Improdutivo", 0.5
-            
             result = self.ai_service.classify_text(processed_text)
-            
             category = result.get('category', 'Improdutivo')
             confidence = result.get('confidence', 0.5)
-            
             return category, confidence
-            
         except Exception as e:
             logger.error(f"Erro na classificação: {e}")
             return "Improdutivo", 0.3
@@ -215,7 +247,7 @@ class ReplyGenerator:
         category_replies = replies.get(category, replies["Improdutivo"])
         
         if confidence > 0.8:
-            return category_replies[0]  
+            return category_replies[0]
         elif confidence > 0.6:
             return category_replies[1]
         else:
@@ -257,61 +289,146 @@ def health_check():
         return jsonify({
             'error': 'Serviço temporariamente indisponível'
         }), 503
-
-@app.route('/analyze', methods=['POST'])
+        
+@app.route('/list', methods=['GET'])
 @handle_errors
 @log_request
-def analyze_email():
-    """
-    Analisa um email e retorna categoria e resposta sugerida.
-    
-    Returns:
-        JSON com análise do email
-    """
-    if not request.is_json:
-        return jsonify({
-            'error': 'Content-Type deve ser application/json'
-        }), 400
-    
-    json_data = request.get_json()
-    
+def list_emails():
     try:
-        validated_data = email_request_schema.load(json_data)
-    except ValidationError as e:
-        return jsonify({
-            'error': 'Dados inválidos',
-            'details': e.messages
-        }), 400
-    
-    content = validated_data['content']
-    logger.info(f"Analisando email com {len(content)} caracteres")
-    
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 10))
+        if page < 1 or per_page < 1:
+            raise ValueError
+    except ValueError:
+        return jsonify({'error': 'Parâmetros de paginação inválidos'}), 400
+
+    # Consulta real no MongoDB
+    collection = g.mongo_client.quick_email.emails
+    total = collection.count_documents({})
+    # Exibir apenas emails não deletados (deleted != True)
+    emails_cursor = collection.find({"$or": [{"deleted": {"$exists": False}}, {"deleted": False}]}) \
+        .skip((page - 1) * per_page) \
+        .limit(per_page)
+    emails = []
+    for doc in emails_cursor:
+        doc["_id"] = str(doc["_id"])
+        emails.append(doc)
+
+    return jsonify({
+        'page': page,
+        'per_page': per_page,
+        'total': total,
+        'emails': emails
+    })
+
+
+import io
+import PyPDF2
+
+def extract_text_from_file(file_storage):
+    filename = file_storage.filename.lower()
+    if filename.endswith('.pdf'):
+        try:
+            pdf_reader = PyPDF2.PdfReader(file_storage.stream)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() or ""
+            return text
+        except Exception as e:
+            logger.error(f"Erro ao ler PDF: {e}")
+            return ""
+    elif filename.endswith('.txt'):
+        try:
+            return file_storage.stream.read().decode('utf-8', errors='ignore')
+        except Exception as e:
+            logger.error(f"Erro ao ler TXT: {e}")
+            return ""
+    else:
+        return ""
+
+@app.route('/analyzis', methods=['POST'])
+@handle_errors
+@log_request
+def analyzis_email():
+    """
+    Analisa um email e retorna categoria e resposta sugerida, aceitando texto e arquivo (PDF ou TXT).
+    O prompt enviado ao modelo inclui o assunto, o conteúdo do email e o texto extraído do arquivo.
+    """
+    if request.content_type and request.content_type.startswith('multipart/form-data'):
+        form = request.form
+        file = request.files.get('file')
+        email = form.get('email', '')
+        snippet = form.get('subject', '')
+        content = form.get('content', '')
+        file_text = ""
+        if file:
+            file_text = extract_text_from_file(file)
+    else:
+        json_data = request.get_json(force=True)
+        email = json_data.get('email', '')
+        snippet = json_data.get('subject', '')
+        content = json_data.get('content', '')
+        file_text = ""
+
+    if not email or not snippet or not (content and content.strip() or file_text and file_text.strip()):
+        return jsonify({'error': 'Campos obrigatórios ausentes'}), 400
+
+    prompt = f"""Assunto: {snippet}\n\nConteúdo do email:\n{content}\n"""
+    if file_text and file_text.strip():
+        prompt += f"\nTexto extraído do arquivo:\n{file_text}"
+
+    logger.info(f"Analisando email (analyzis) com {len(prompt)} caracteres (content: {len(content or '')}, file: {len(file_text or '')})")
     classifier = get_email_classifier()
-    category, confidence = classifier.classify_email(content)
-    
+    category, confidence = classifier.classify_email(prompt)
     reply_generator = get_reply_generator()
     suggested_reply = reply_generator.generate_reply(category, confidence)
-    
     settings = get_settings()
     processed_content = None
     if settings.debug_mode:
-        processed_content = classifier.preprocessor.preprocess_text(content)
-    
-    logger.info(f"Email classificado como: {category} (confiança: {confidence:.2f})")
-    
+        processed_content = classifier.preprocessor.preprocess_text(prompt)
+
+    g.mongo_client.quick_email.emails.insert_one({
+        'email': email,
+        'snippet': snippet,
+        'content': content,
+        'category': category,
+        'confidence': confidence,
+        'suggested_reply': suggested_reply
+    })
+
     response_data = {
         'category': category,
         'confidence': confidence,
         'suggested_reply': suggested_reply,
         'processed_content': processed_content
     }
-    
     return jsonify(email_response_schema.dump(response_data))
+
+@app.route('/delete/<email_id>', methods=['POST'])
+@handle_errors
+@log_request
+def soft_delete_email(email_id):
+    """
+    Soft delete de email: marca o campo 'deleted' como True.
+    """
+    collection = g.mongo_client.quick_email.emails
+    try:
+        try:
+            obj_id = ObjectId(email_id)
+        except (bson_errors.InvalidId, Exception):
+            return jsonify({"error": "ID inválido"}), 400
+        result = collection.update_one({"_id": obj_id}, {"$set": {"deleted": True}})
+        if result.matched_count == 0:
+            return jsonify({"error": "Email não encontrado"}), 404
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"Erro ao fazer soft delete: {e}")
+        return jsonify({"error": "Erro ao deletar email"}), 500
 
 @app.route('/', methods=['GET'])
 def index():
     return jsonify({
-        'name': 'Email Analysis API',
+        'name': 'Quick Email',
         'version': '1.0.0',
         'description': 'API para análise e classificação automática de emails',
         'endpoints': {
@@ -372,28 +489,12 @@ def payload_too_large(error):
         'message': 'O conteúdo enviado excede o limite permitido'
     }), 413
 
-@app.before_request
-def before_request():
-    g.start_time = time.time()
-
-@app.after_request
-def after_request(response):
-    if hasattr(g, 'start_time'):
-        duration = time.time() - g.start_time
-        logger.info(f"Requisição processada em {duration:.3f}s")
-    
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
-    
-    return response
-
 def run_app():
     settings = get_settings()
     
     app.run(
         host='0.0.0.0',
-        port=int(os.environ.get('PORT', 5050)),
+        port=int(os.environ.get('PORT', 4000)),
         debug=settings.debug_mode,
         threaded=True
     )
