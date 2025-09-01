@@ -83,7 +83,7 @@ class AIModelService:
         )
         prompt = f"{base_prompt}\n\nTexto do e-mail:\n\"{email_text}\"\n"
         if attachment_text:
-            prompt += f"\nConteúdo do anexo:\n\"{attachment_text[:1500]}\"\n"  # Limita tamanho do anexo
+            prompt += f"\nConteúdo do anexo:\n\"{attachment_text[:1500]}\"\n"
         prompt += "\nResposta: "
         return prompt
     def generate_email_response(self, email_text: str, attachment_path: Optional[str] = None) -> Dict[str, any]:
@@ -120,7 +120,6 @@ class AIModelService:
             if not result or len(result) == 0:
                 raise PipelineException("Modelo retornou resultado vazio")
             raw_response = result[0].get('generated_text', '').strip()
-            # Remove o prompt do início da resposta, se presente
             response = raw_response[len(prompt):].strip() if raw_response.startswith(prompt) else raw_response
             logger.debug(f"Resposta do modelo: {response}")
             return {

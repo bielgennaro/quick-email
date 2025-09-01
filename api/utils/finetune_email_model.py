@@ -11,7 +11,6 @@ OUTPUT_DIR = "finetuned_model"
 with open(DATASET_PATH, "r", encoding="utf-8") as f:
     data = json.load(f)
 
-# Preparar exemplos para o modelo
 examples = []
 for item in data:
     prompt = (

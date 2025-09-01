@@ -302,10 +302,8 @@ def list_emails():
     except ValueError:
         return jsonify({'error': 'Parâmetros de paginação inválidos'}), 400
 
-    # Consulta real no MongoDB
     collection = g.mongo_client.quick_email.emails
     total = collection.count_documents({})
-    # Exibir apenas emails não deletados (deleted != True)
     emails_cursor = collection.find({"$or": [{"deleted": {"$exists": False}}, {"deleted": False}]}) \
         .skip((page - 1) * per_page) \
         .limit(per_page)

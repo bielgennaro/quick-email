@@ -156,7 +156,6 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     settings = Settings()
     
-    # configurar nltk se necessário
     settings.setup_nltk_data_path()
     
     return settings
